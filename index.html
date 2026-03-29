@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gangdong Meal Market</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100..900&family=Noto+Serif+KR:wght@200..900&family=Song+Myung&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div id="wrapper">
+    <section class="main-layout">
+      <div class="canvas-panel">
+        <canvas id="canvas"></canvas>
+      </div>
+
+      <aside class="sidebar-panels">
+        <header id="header" class="sidebar-header">
+          <div class="intro">
+            <h1>Gangdong Meal Map</h1>
+          </div>
+
+          <div class="controls-row">
+            <div class="stat-section">
+              <h3>Meal</h3>
+              <div class="toggle-row" id="mealToggle">
+                <button data-meal="breakfast">아침</button>
+                <button data-meal="lunch" class="active">점심</button>
+                <button data-meal="dinner">저녁</button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="panel detail-panel">
+          <h2>Detail</h2>
+          <div id="detailCard" class="detail-card empty">
+            <h3>식당을 선택해 주세요</h3>
+            <p>위 캔버스에서 식당을 클릭하면 상세 정보가 보입니다.</p>
+          </div>
+        </section>
+
+        <section class="panel random-pick-panel">
+          <h2>Random Pick</h2>
+          <div class="random-pick-stack">
+            <label class="random-pick-label" for="randomPickScope">범위</label>
+            <select id="randomPickScope">
+              <option value="all">전체</option>
+            </select>
+            <button id="randomPickBtn" class="random-pick-button" type="button">랜덤 선택</button>
+          </div>
+        </section>
+
+        <section class="panel overview-panel">
+          <h2>Overview</h2>
+          <div class="stats-row sidebar-stats">
+            <div class="stat-section">
+              <h3>Visible</h3>
+              <div class="stat-big" id="statTotal">0</div>
+            </div>
+            <div class="stat-section">
+              <h3>Categories</h3>
+              <div class="stat-big" id="statCategories">0</div>
+              <div class="stat-label">표시 중</div>
+            </div>
+            <div class="stat-section">
+              <h3>Custom</h3>
+              <div class="stat-big" id="statCustom">0</div>
+              <div class="stat-label">로컬 변경</div>
+            </div>
+            <div class="stat-section wide-stat">
+              <h3>Status</h3>
+              <div class="stat-note" id="statusText">점심 시장을 로드하는 중</div>
+            </div>
+          </div>
+          <div class="legend-row">
+            <span class="legend-chip cuisine-korean">한식</span>
+            <span class="legend-chip cuisine-chinese">중식</span>
+            <span class="legend-chip cuisine-japanese">일식</span>
+            <span class="legend-chip cuisine-western">양식</span>
+            <span class="legend-chip cuisine-asian">동남아</span>
+            <span class="legend-chip cuisine-cafe">카페</span>
+            <span class="legend-chip cuisine-fast">패스트·간편식</span>
+          </div>
+        </section>
+
+        <section class="panel search-panel">
+          <h2>Search</h2>
+          <div class="stat-section search-section">
+            <input id="searchInput" type="search" placeholder="식당명 또는 메뉴군 검색">
+          </div>
+        </section>
+
+        <section class="panel edit-panel">
+          <h2>Edit</h2>
+          <form id="editForm" class="editor-form">
+            <label><span>상호명</span><input id="editName" type="text" readonly></label>
+            <label><span>카테고리</span><select id="editCategory"></select></label>
+            <label><span>메뉴군</span><input id="editMenuCategory" type="text"></label>
+            <label><span>대표메뉴</span><input id="editSignatureMenu" type="text"></label>
+            <label><span>태그</span><input id="editTags" type="text" placeholder="쉼표로 구분"></label>
+            <div class="editor-checks">
+              <label><input id="editBreakfast" type="checkbox"> 아침</label>
+              <label><input id="editLunch" type="checkbox"> 점심</label>
+              <label><input id="editDinner" type="checkbox"> 저녁</label>
+            </div>
+            <div class="editor-actions">
+              <button id="saveEditBtn" type="submit" class="primary">저장</button>
+              <button id="resetEditBtn" type="button">되돌리기</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel add-panel">
+          <h2>Add Restaurant</h2>
+          <form id="addForm" class="editor-form">
+            <label><span>상호명</span><input id="addName" type="text" placeholder="예: 새식당 강동역점"></label>
+            <label><span>카테고리</span><select id="addCategory"></select></label>
+            <label><span>메뉴군</span><input id="addMenuCategory" type="text"></label>
+            <label><span>대표메뉴</span><input id="addSignatureMenu" type="text"></label>
+            <label><span>태그</span><input id="addTags" type="text" placeholder="쉼표로 구분"></label>
+            <div class="editor-checks">
+              <label><input id="addBreakfast" type="checkbox"> 아침</label>
+              <label><input id="addLunch" type="checkbox" checked> 점심</label>
+              <label><input id="addDinner" type="checkbox"> 저녁</label>
+            </div>
+            <div class="editor-actions">
+              <button type="submit" class="primary">식당 추가</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel breakdown-panel">
+          <h2>Breakdown</h2>
+          <div id="categoryList" class="breakdown-list"></div>
+        </section>
+      </aside>
+    </section>
+  </div>
+
+  <div id="sidebarTrash" class="sidebar-trash" aria-hidden="true">
+    <div class="sidebar-trash-inner">
+      <svg viewBox="0 0 24 24" class="sidebar-trash-icon" aria-hidden="true">
+        <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 7h2v7h-2v-7zm4 0h2v7h-2v-7zM7 10h2v7H7v-7zm1 10h8a2 2 0 0 0 2-2V8H6v10a2 2 0 0 0 2 2z"></path>
+      </svg>
+      <strong>식당 삭제</strong>
+      <span>오른쪽으로 드래그해서 놓기</span>
+    </div>
+  </div>
+
+  <div id="tooltip">
+    <div class="tt-title"></div>
+    <div class="tt-stats"></div>
+  </div>
+
+  <script src="./database.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
