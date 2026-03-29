@@ -254,3 +254,7 @@ const RESTAURANT_DB = {
     "인심숯불돼지집": { category: "한식", menuCategory: "고기·식사", signatureMenu: "숯불돼지구이", tags: ["고기", "한식"], verification: "이미지 기준" }
   }
 };
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = RESTAURANT_DB;
+}

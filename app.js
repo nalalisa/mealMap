@@ -1,4 +1,3 @@
-const EDIT_DB_KEY = "gangdong-meal-heatmap-edits-v3";
 const CATEGORY_ORDER = ["한식", "중식", "일식", "양식", "동남아", "카페", "패스트·간편식", "기타"];
 const THEME_CONFIG = {
   breakfast: {
@@ -54,7 +53,7 @@ const DEFAULT_CATEGORIES = [
   "건강식",
   "기타"
 ];
-const SOURCE_RESTAURANT_NAMES = createSourceRestaurantNameSet();
+const API_BASE_URL = resolveApiBaseUrl();
 const state = {
   mealMode: getInitialMealMode(),
   query: "",
@@ -83,8 +82,6 @@ const detailMotionState = {
   lastId: null,
   timeoutId: null
 };
-
-const editStore = loadEditStore();
 
 const elements = {
   wrapper: document.querySelector("#wrapper"),
@@ -129,15 +126,16 @@ const ctx = elements.canvas.getContext("2d");
 let dpr = window.devicePixelRatio || 1;
 let restaurants = [];
 
-initialize();
+initialize().catch((error) => {
+  console.error(error);
+  alert("서버 데이터를 불러오지 못했습니다. Node 서버와 MySQL 상태를 확인해 주세요.");
+});
 
-function initialize() {
+async function initialize() {
   syncTheme();
-  rebuildRestaurants();
-  fillCategoryEditors();
   bindEvents();
   syncMealToggle();
-  render();
+  await refreshRestaurants();
 }
 
 function getInitialMealMode() {
@@ -188,135 +186,61 @@ function bindEvents() {
   });
 }
 
-function loadEditStore() {
-  const keys = [EDIT_DB_KEY, "gangdong-meal-heatmap-edits-v2"];
-
-  try {
-    for (const key of keys) {
-      const parsed = JSON.parse(localStorage.getItem(key) || "null");
-      if (parsed && typeof parsed === "object") {
-        return {
-          profileOverrides: parsed.profileOverrides || {},
-          customRestaurants: Array.isArray(parsed.customRestaurants) ? parsed.customRestaurants : [],
-          deletedRestaurants: Array.isArray(parsed.deletedRestaurants) ? parsed.deletedRestaurants : []
-        };
-      }
-    }
-  } catch {}
-
-  return { profileOverrides: {}, customRestaurants: [], deletedRestaurants: [] };
+async function refreshRestaurants(nextActiveId = state.activeId) {
+  const data = await requestJson("/api/restaurants");
+  restaurants = data.map(hydrateRestaurant);
+  fillCategoryEditors();
+  state.activeId = nextActiveId && restaurants.some((item) => item.id === nextActiveId) ? nextActiveId : null;
+  render();
 }
 
-function saveEditStore() {
-  localStorage.setItem(EDIT_DB_KEY, JSON.stringify(editStore));
-}
-
-function rebuildRestaurants() {
-  const map = new Map();
-  const deletedNames = new Set(editStore.deletedRestaurants || []);
-
-  RESTAURANT_DB.rawSources.breakfast.forEach((name) => upsertSourceRestaurant(map, name, "breakfast", deletedNames));
-  RESTAURANT_DB.rawSources.lunch.forEach((name) => upsertSourceRestaurant(map, name, "lunch", deletedNames));
-  RESTAURANT_DB.rawSources.dinner.forEach((name) => upsertSourceRestaurant(map, name, "dinner", deletedNames));
-
-  editStore.customRestaurants.forEach((item) => {
-    if (deletedNames.has(item.name)) return;
-
-    const existing = map.get(item.name);
-    const payload = {
-      id: slugify(item.name),
-      name: item.name,
-      corrected: !!existing?.corrected,
-      aliases: existing?.aliases || new Set([item.name]),
-      category: item.category || existing?.category || "기타",
-      menuCategory: item.menuCategory || existing?.menuCategory || "기타",
-      signatureMenu: item.signatureMenu || existing?.signatureMenu || "현장 메뉴 확인",
-      tags: Array.isArray(item.tags) ? item.tags : [],
-      verification: item.verification || existing?.verification || "이름 기반",
-      breakfast: existing ? (!!existing.breakfast || !!item.breakfast) : !!item.breakfast,
-      lunch: existing ? (!!existing.lunch || !!item.lunch) : !!item.lunch,
-      dinner: existing ? (!!existing.dinner || !!item.dinner) : !!item.dinner,
-      isCustom: true
-    };
-
-    map.set(item.name, payload);
-  });
-
-  restaurants = Array.from(map.values()).map((restaurant) => ({
+function hydrateRestaurant(restaurant) {
+  const aliases = Array.isArray(restaurant.aliases) ? restaurant.aliases : [];
+  const tags = Array.isArray(restaurant.tags) ? restaurant.tags : [];
+  const hydrated = {
     ...restaurant,
-    aliases: Array.from(restaurant.aliases || []),
-    cuisineGroup: toCuisineGroup(restaurant),
-    sizeValue: computeWeight(restaurant)
-  }));
+    aliases,
+    tags
+  };
+
+  return {
+    ...hydrated,
+    corrected: aliases.some((alias) => alias !== hydrated.name),
+    cuisineGroup: hydrated.cuisineGroup || toCuisineGroup(hydrated),
+    sizeValue: computeWeight(hydrated)
+  };
 }
 
-function upsertSourceRestaurant(map, sourceName, mealType, deletedNames) {
-  const normalized = RESTAURANT_DB.corrections[sourceName] || sourceName;
-  if (deletedNames?.has(normalized)) return;
-  const existing = map.get(normalized);
+async function requestJson(url, options = {}) {
+  const requestUrl = /^https?:\/\//i.test(url) ? url : `${API_BASE_URL}${url}`;
+  const response = await fetch(requestUrl, options);
+  const payload = await response.json().catch(() => null);
 
-  if (existing) {
-    existing[mealType] = true;
-    existing.aliases.add(sourceName);
-    if (sourceName !== normalized) existing.corrected = true;
-    return;
+  if (!response.ok) {
+    throw new Error(payload?.message || `HTTP ${response.status}`);
   }
 
-  const profile = inferProfile(normalized);
-  map.set(normalized, {
-    id: slugify(normalized),
-    name: normalized,
-    corrected: sourceName !== normalized,
-    aliases: new Set([sourceName]),
-    category: profile.category,
-    menuCategory: profile.menuCategory,
-    signatureMenu: profile.signatureMenu,
-    tags: profile.tags || [],
-    verification: profile.verification || "이름 기반",
-    breakfast: mealType === "breakfast",
-    lunch: mealType === "lunch",
-    dinner: mealType === "dinner",
-    isCustom: false
-  });
+  return payload;
 }
 
-function inferProfile(name) {
-  if (editStore.profileOverrides[name]) {
-    return { ...editStore.profileOverrides[name], tags: editStore.profileOverrides[name].tags || [] };
+function resolveApiBaseUrl() {
+  if (window.location.protocol === "file:") {
+    return "http://127.0.0.1:3000";
   }
 
-  if (RESTAURANT_DB.profiles[name]) {
-    return { ...RESTAURANT_DB.profiles[name], tags: RESTAURANT_DB.profiles[name].tags || [] };
+  if (window.location.port === "3000") {
+    return window.location.origin;
   }
 
-  const rules = [
-    { test: ["스타벅스", "이디야", "투썸", "빽다방", "셀렉토커피", "차얌", "카페"], category: "카페", menuCategory: "커피", signatureMenu: "커피 · 음료", tags: ["커피", "음료"], verification: "이름 기반" },
-    { test: ["파리바게뜨", "뚜레쥬르", "단팥빵", "빵장수", "베이커리"], category: "베이커리", menuCategory: "빵", signatureMenu: "빵 · 샌드위치", tags: ["빵", "베이커리"], verification: "이름 기반" },
-    { test: ["김밥", "토스트", "떡볶이", "샌드위치", "도시락"], category: "분식", menuCategory: "김밥·분식", signatureMenu: "김밥 · 분식", tags: ["분식", "간편식"], verification: "이름 기반" },
-    { test: ["버거", "롯데리아", "맘스터치", "써브웨이", "치킨"], category: "패스트푸드", menuCategory: "버거·샌드위치", signatureMenu: "버거 · 샌드위치", tags: ["버거", "패스트푸드"], verification: "이름 기반" },
-    { test: ["샐러디", "샐러드", "포케", "슬로우캘리"], category: "건강식", menuCategory: "샐러드·포케", signatureMenu: "샐러드 · 포케", tags: ["샐러드", "포케"], verification: "이름 기반" },
-    { test: ["규동", "우동", "카츠", "돈까스", "교자", "모밀", "소바", "나베"], category: "일식", menuCategory: "일식", signatureMenu: "일식 메뉴", tags: ["일식"], verification: "이름 기반" },
-    { test: ["짬뽕", "짜장", "반점", "홍콩", "마라", "미엔"], category: "중식", menuCategory: "중식", signatureMenu: "중식 면요리", tags: ["중식"], verification: "이름 기반" },
-    { test: ["쌀국수", "분짜", "호치민", "포아이니"], category: "베트남·아시아", menuCategory: "쌀국수", signatureMenu: "쌀국수 · 분짜", tags: ["쌀국수", "베트남"], verification: "이름 기반" },
-    { test: ["파스타", "피자", "미태리", "루벨", "래빗", "브로스"], category: "양식", menuCategory: "양식", signatureMenu: "파스타 · 브런치", tags: ["양식"], verification: "이름 기반" },
-    { test: ["국밥", "찌개", "칼국수", "국수", "감자탕", "갈비", "보쌈", "보리밥", "시래기", "닭갈비", "순두부"], category: "한식", menuCategory: "한식", signatureMenu: "한식 메뉴", tags: ["한식"], verification: "이름 기반" }
-  ];
-
-  for (const rule of rules) {
-    if (rule.test.some((keyword) => name.includes(keyword))) {
-      return { ...rule, tags: [...rule.tags] };
-    }
-  }
-
-  return { category: "기타", menuCategory: "기타", signatureMenu: "현장 메뉴 확인", tags: ["기타"], verification: "이름 기반" };
+  const hostname = window.location.hostname || "127.0.0.1";
+  return `${window.location.protocol}//${hostname}:3000`;
 }
 
 function computeWeight(restaurant) {
   let score = 1;
   if (restaurant.breakfast) score += 0.2;
   if (restaurant.lunch && restaurant.dinner) score += 0.35;
-  if (restaurant.verification === "웹 검증") score += 0.2;
-  if (restaurant.isCustom) score += 0.15;
+  if (restaurant.isCustom) score += 0.1;
   return score;
 }
 
@@ -335,9 +259,7 @@ function toCuisineGroup(restaurant) {
 function fillCategoryEditors() {
   const categories = Array.from(new Set([
     ...DEFAULT_CATEGORIES,
-    ...Object.values(RESTAURANT_DB.profiles).map((item) => item.category),
-    ...Object.values(editStore.profileOverrides).map((item) => item.category),
-    ...editStore.customRestaurants.map((item) => item.category)
+    ...restaurants.map((item) => item.category)
   ])).filter(Boolean).sort((a, b) => a.localeCompare(b, "ko"));
 
   [elements.editCategory, elements.addCategory].forEach((select) => {
@@ -348,20 +270,6 @@ function fillCategoryEditors() {
       return option;
     }));
   });
-}
-
-function createSourceRestaurantNameSet() {
-  const set = new Set();
-  ["breakfast", "lunch", "dinner"].forEach((mealType) => {
-    RESTAURANT_DB.rawSources[mealType].forEach((name) => {
-      set.add(RESTAURANT_DB.corrections[name] || name);
-    });
-  });
-  return set;
-}
-
-function isSourceRestaurant(name) {
-  return SOURCE_RESTAURANT_NAMES.has(name);
 }
 
 function getVisibleRestaurants() {
@@ -583,7 +491,7 @@ function updateStats(items) {
   const grouped = groupByCuisine(items);
   elements.statTotal.textContent = items.length.toLocaleString("ko-KR");
   elements.statCategories.textContent = Object.keys(grouped).length.toLocaleString("ko-KR");
-  elements.statCustom.textContent = editStore.customRestaurants.length.toLocaleString("ko-KR");
+  elements.statCustom.textContent = restaurants.filter((item) => item.isCustom).length.toLocaleString("ko-KR");
 
   const mealLabels = { breakfast: "아침 히트맵", lunch: "점심 히트맵", dinner: "저녁 히트맵" };
   const mealLabel = mealLabels[state.mealMode] || "식사 히트맵";
@@ -730,127 +638,91 @@ function populateEditForm(item) {
   elements.editDinner.checked = !!item.dinner;
 }
 
-function handleEditSubmit(event) {
+async function handleEditSubmit(event) {
   event.preventDefault();
   const active = getActiveRestaurant();
   if (!active) return;
 
-  const payload = {
-    category: elements.editCategory.value,
-    menuCategory: elements.editMenuCategory.value.trim() || "기타",
-    signatureMenu: elements.editSignatureMenu.value.trim() || "현장 메뉴 확인",
-    tags: parseTags(elements.editTags.value),
-    verification: active.verification || "이름 기반",
-    breakfast: elements.editBreakfast.checked,
-    lunch: elements.editLunch.checked,
-    dinner: elements.editDinner.checked
-  };
-
-  editStore.profileOverrides[active.name] = {
-    category: payload.category,
-    menuCategory: payload.menuCategory,
-    signatureMenu: payload.signatureMenu,
-    tags: payload.tags,
-    verification: payload.verification
-  };
-
-  upsertCustomOverlay(active.name, payload);
-  rebuildAfterDataChange(active.name);
+  try {
+    const payload = {
+      name: active.name,
+      category: elements.editCategory.value,
+      menuCategory: elements.editMenuCategory.value.trim() || "기타",
+      signatureMenu: elements.editSignatureMenu.value.trim() || "현장 메뉴 확인",
+      tags: parseTags(elements.editTags.value),
+      breakfast: elements.editBreakfast.checked,
+      lunch: elements.editLunch.checked,
+      dinner: elements.editDinner.checked
+    };
+    await requestJson(`/api/restaurants/${encodeURIComponent(active.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    await refreshRestaurants(active.id);
+  } catch (error) {
+    console.error(error);
+    alert("식당 수정 저장에 실패했습니다.");
+  }
 }
 
-function handleAddSubmit(event) {
+async function handleAddSubmit(event) {
   event.preventDefault();
   const name = elements.addName.value.trim();
   if (!name) return;
 
-  const payload = {
-    category: elements.addCategory.value,
-    menuCategory: elements.addMenuCategory.value.trim() || "기타",
-    signatureMenu: elements.addSignatureMenu.value.trim() || "현장 메뉴 확인",
-    tags: parseTags(elements.addTags.value),
-    verification: "이름 기반",
-    breakfast: elements.addBreakfast.checked,
-    lunch: elements.addLunch.checked,
-    dinner: elements.addDinner.checked
-  };
-
-  editStore.profileOverrides[name] = {
-    category: payload.category,
-    menuCategory: payload.menuCategory,
-    signatureMenu: payload.signatureMenu,
-    tags: payload.tags,
-    verification: payload.verification
-  };
-
-  editStore.deletedRestaurants = (editStore.deletedRestaurants || []).filter((item) => item !== name);
-  upsertCustomOverlay(name, payload);
-  elements.addForm.reset();
-  elements.addBreakfast.checked = false;
-  elements.addLunch.checked = true;
-  rebuildAfterDataChange(name);
-}
-
-function upsertCustomOverlay(name, payload) {
-  editStore.customRestaurants = editStore.customRestaurants.filter((item) => item.name !== name);
-  editStore.customRestaurants.push({ name, ...payload });
-}
-
-function deleteRestaurant(restaurant) {
-  const name = restaurant.name;
-  editStore.customRestaurants = editStore.customRestaurants.filter((item) => item.name !== name);
-  delete editStore.profileOverrides[name];
-
-  if (isSourceRestaurant(name)) {
-    if (!editStore.deletedRestaurants.includes(name)) {
-      editStore.deletedRestaurants.push(name);
-    }
-  } else {
-    editStore.deletedRestaurants = editStore.deletedRestaurants.filter((item) => item !== name);
+  try {
+    const payload = {
+      name,
+      category: elements.addCategory.value,
+      menuCategory: elements.addMenuCategory.value.trim() || "기타",
+      signatureMenu: elements.addSignatureMenu.value.trim() || "현장 메뉴 확인",
+      tags: parseTags(elements.addTags.value),
+      breakfast: elements.addBreakfast.checked,
+      lunch: elements.addLunch.checked,
+      dinner: elements.addDinner.checked
+    };
+    const created = await requestJson("/api/restaurants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    elements.addForm.reset();
+    elements.addBreakfast.checked = false;
+    elements.addLunch.checked = true;
+    await refreshRestaurants(created.id);
+  } catch (error) {
+    console.error(error);
+    alert("식당 추가 저장에 실패했습니다.");
   }
-
-  if (state.activeId === restaurant.id) {
-    state.activeId = null;
-  }
-
-  stopRandomPick(false);
-  saveEditStore();
-  rebuildRestaurants();
-  fillCategoryEditors();
-  render();
 }
 
-function rebuildAfterDataChange(activeName) {
+async function deleteRestaurant(restaurant) {
   stopRandomPick(false);
-  saveEditStore();
-  rebuildRestaurants();
-  fillCategoryEditors();
-  state.activeId = slugify(activeName);
-  render();
+  await requestJson(`/api/restaurants/${encodeURIComponent(restaurant.id)}`, {
+    method: "DELETE"
+  });
+  await refreshRestaurants(null);
 }
 
-function moveRestaurantToCategory(restaurant, targetCuisineGroup) {
+async function moveRestaurantToCategory(restaurant, targetCuisineGroup) {
   const category = cuisineGroupToEditableCategory(targetCuisineGroup, restaurant.category);
   const payload = {
+    name: restaurant.name,
     category,
     menuCategory: restaurant.menuCategory,
     signatureMenu: restaurant.signatureMenu,
     tags: restaurant.tags || [],
-    verification: restaurant.verification,
     breakfast: restaurant.breakfast,
     lunch: restaurant.lunch,
     dinner: restaurant.dinner
   };
-
-  editStore.profileOverrides[restaurant.name] = {
-    category: payload.category,
-    menuCategory: payload.menuCategory,
-    signatureMenu: payload.signatureMenu,
-    tags: payload.tags,
-    verification: payload.verification
-  };
-
-  upsertCustomOverlay(restaurant.name, payload);
-  rebuildAfterDataChange(restaurant.name);
+  await requestJson(`/api/restaurants/${encodeURIComponent(restaurant.id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  await refreshRestaurants(restaurant.id);
 }
 
 function getActiveRestaurant() {
@@ -1179,7 +1051,7 @@ function updateDragState(event) {
   draw();
 }
 
-function handleCanvasUp(event) {
+async function handleCanvasUp(event) {
   if (state.randomPick?.active) return;
   if (!state.press && !state.drag) return;
 
@@ -1195,7 +1067,7 @@ function handleCanvasUp(event) {
 
     if (targetDelete) {
       if (window.confirm(`"${draggedItem.name}" 식당을 삭제하시겠습니까?`)) {
-        deleteRestaurant(draggedItem);
+        await deleteRestaurant(draggedItem);
         return;
       }
       draw();
@@ -1203,7 +1075,7 @@ function handleCanvasUp(event) {
     }
 
     if (target && draggedItem.cuisineGroup !== target) {
-      moveRestaurantToCategory(draggedItem, target);
+      await moveRestaurantToCategory(draggedItem, target);
       return;
     }
 

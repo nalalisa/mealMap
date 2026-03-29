@@ -1,0 +1,15 @@
+{
+  "name": "gangdong-meal-map",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gangdong meal treemap app with local Node server and MySQL persistence",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "mysql2": "^3.11.5"
+  }
+}
