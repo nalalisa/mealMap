@@ -1,5 +1,38 @@
 # Gangdong Meal Map
 
+3D 심초음파 장비(GE Vivid E95 등)의 빔 기하학에 대해 확인하려면 검색이 필요합니다.
+
+DICOM의 3D 심초음파 저장 방식을 확인하는 게 핵심이라 그 부분을 검색합니다.
+
+핵심 답을 정리하면 다음과 같습니다.
+
+## 1. 빔은 등각도로 펼쳐지는가 — 예 (취득 단계에서는)
+
+Vivid E95 같은 매트릭스 어레이 장비는 phased array 원리로 빔을 전자적으로 스티어링합니다. 매트릭스 어레이는 각 크리스털을 독립적으로 활성화·집속·스티어링하여 azimuth(x-y) 및 elevation(x-z) 평면 모두에서 빔을 만들어 피라미드형 3D 스캔 볼륨을 커버 [PubMed Central](https://pmc.ncbi.nlm.nih.gov/articles/PMC5100241/) 합니다. 초음파 영상은 한 영역을 가로질러 발산하는 스캔 라인의 연속으로 취득 [DICOM](https://www.dicomstandard.org/News-dir/ftsup/docs/sups/sup43.pdf) 되며, 따라서 취득 raw 도메인에서는 azimuth/elevation 양방향으로 (거의) **등각 간격**의 스캔라인/스캔플레인 구조입니다. 실제로 설계 단계에서 60°×60° 피라미드 볼륨을 X·Z 양방향 모두 1° 빔 간격으로 채우는 [Thoracic Key](https://thoracickey.com/physical-and-technical-aspects-and-overview-of-3d-echocardiography/) 식의 등각도 샘플링을 가정합니다.
+
+## 2. 하지만 DICOM 파일은 보통 이미 Cartesian으로 변환되어 있음
+
+이게 가장 중요한 부분입니다. 취득 기하학과 무관하게, 초기 스캔 영상 취득 후 US 스캐너는 데이터를 적절한 Cartesian 볼륨으로 재조립(reformat) [DICOM](https://www.dicomstandard.org/News-dir/ftsup/docs/sups/sup43.pdf) 합니다. 대부분의 취득 장비는 다른 취득 기하학에서 데이터를 리샘플링하여 Cartesian 볼륨을 구성 [NEMA](https://dicom.nema.org/dicom/2013/output/chtml/part03/sect_A.59.html) 하며, 모든 Cartesian 볼륨은 인접 평면 간 간격이 동일한 평행 평면들의 집합 [NEMA](https://dicom.nema.org/dicom/2013/output/chtml/part03/sect_A.59.html) 입니다.
+
+즉 Enhanced US Volume로 저장된 표준 DICOM은 **이미 등각 → 등간격(직교)으로 스캔 컨버전된 데이터**입니다. 이 경우:
+
+- 별도의 "각도 배열" 태그는 보통 없습니다.
+- 복셀 간격(PixelSpacing/SpacingBetweenSlices 또는 Per-frame Functional Group의 spacing)과 FOV·해상도만으로 좌표가 결정됩니다. 즉 **FOV와 해상도(=복셀 간격)만으로 얻으면 되는 값**입니다.
+
+## 3. 단, 각도 정보가 들어있는 경우도 있음
+
+데이터가 원시(곡선/극좌표) 기하학으로 저장된 경우, 볼륨 좌표계를 트랜스듀서 좌표계로 매핑하는 4x4 강체 변환 행렬(Volume to Transducer Mapping Matrix) [Innolitics](https://dicom.innolitics.com/ciods/enhanced-us-volume/ultrasound-frame-of-reference/00209309) 같은 태그가 존재합니다. 또한 구형 Cartesian US(US Multi-frame) 데이터에서는 Sequence of Ultrasound Regions 안의 RegionSpatialFormat / 물리 단위 태그로 sector(부채꼴) 기하학이 기술될 수 있습니다.
+
+## 확인 방법 (실무 권장)
+
+실제 파일에서 다음을 직접 확인하는 게 확실합니다:
+
+1. **SOP Class UID** — Enhanced US Volume이면 직교 볼륨 → FOV+해상도로 충분.
+2. 각 프레임의 spacing 태그(`(0028,0030)` PixelSpacing, `(0018,0088)` SpacingBetweenSlices 또는 Per-frame FG의 Pixel Measures)가 일정한지.
+3. `Sequence of Ultrasound Regions (0018,6011)` 또는 angle/transducer mapping 관련 태그 존재 여부.
+
+파일 하나를 올려주시면 어떤 형식(직교 변환본인지, 각도 정보 포함 raw인지)인지 태그를 직접 확인해 드릴 수 있습니다.
+
 강동역 인근 회사 식권 사용 가능 식당을 카테고리 기반 treemap으로 탐색하는 정적 웹앱입니다.
 
 사이트는 아침, 점심, 저녁 식당을 토글로 전환해서 볼 수 있고, 식당 클릭 상세보기, 카테고리 드래그 이동, 랜덤 픽 애니메이션, 로컬 DB 수정 기능을 포함합니다.
